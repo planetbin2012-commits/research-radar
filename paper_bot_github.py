@@ -11,7 +11,9 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import os
 
 # ======================
-# 配置（从环境变量读取）
+
+# 配置
+
 # ======================
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
@@ -27,7 +29,9 @@ SMTP_PORT = int(os.getenv("SMTP_PORT",587))
 SEARCH_TOPIC = os.getenv("SEARCH_TOPIC","cognitive bias")
 
 # ======================
-# 初始化数据库
+
+# 数据库
+
 # ======================
 
 conn = sqlite3.connect("papers.db")
@@ -46,140 +50,160 @@ date TEXT
 conn.commit()
 
 # ======================
+
 # PubMed抓取
+
 # ======================
 
 def fetch_pubmed():
 
-    url="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+```
+url="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 
-    params={
-        "db":"pubmed",
-        "term":SEARCH_TOPIC,
-        "retmax":10,
-        "retmode":"json",
-        "reldate":1
-    }
+params={
+    "db":"pubmed",
+    "term":SEARCH_TOPIC,
+    "retmax":20,
+    "retmode":"json",
+    "reldate":1
+}
 
-    r=requests.get(url,params=params)
+r=requests.get(url,params=params)
 
-    ids=r.json()["esearchresult"]["idlist"]
+ids=r.json()["esearchresult"]["idlist"]
 
-    papers=[]
+papers=[]
 
-    if not ids:
-        return papers
-
-    url2="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
-
-    params2={
-        "db":"pubmed",
-        "id":",".join(ids),
-        "retmode":"xml"
-    }
-
-    r2=requests.get(url2,params=params2)
-
-    root=ET.fromstring(r2.text)
-
-    for article in root.findall(".//PubmedArticle"):
-
-        title=article.findtext(".//ArticleTitle")
-        abstract=article.findtext(".//AbstractText")
-        pmid=article.findtext(".//PMID")
-
-        if abstract:
-
-            papers.append({
-                "id":pmid,
-                "title":title,
-                "abstract":abstract,
-                "source":"pubmed"
-            })
-
+if not ids:
     return papers
 
+url2="https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+
+params2={
+    "db":"pubmed",
+    "id":",".join(ids),
+    "retmode":"xml"
+}
+
+r2=requests.get(url2,params=params2)
+
+root=ET.fromstring(r2.text)
+
+for article in root.findall(".//PubmedArticle"):
+
+    title=article.findtext(".//ArticleTitle")
+    abstract=article.findtext(".//AbstractText")
+    pmid=article.findtext(".//PMID")
+
+    if abstract:
+
+        papers.append({
+            "id":pmid,
+            "title":title,
+            "abstract":abstract,
+            "source":"pubmed"
+        })
+
+return papers
+```
 
 # ======================
-# arXiv抓取
+
+# arXiv抓取（24小时过滤）
+
 # ======================
 
 def fetch_arxiv():
 
-    url="http://export.arxiv.org/api/query"
+```
+url="http://export.arxiv.org/api/query"
 
-    params={
-        "search_query":SEARCH_TOPIC,
-        "start":0,
-        "max_results":10,
-        "sortBy":"submittedDate"
-    }
+params={
+    "search_query":SEARCH_TOPIC,
+    "start":0,
+    "max_results":20,
+    "sortBy":"submittedDate"
+}
 
-    r=requests.get(url,params=params)
+r=requests.get(url,params=params)
 
-    root=ET.fromstring(r.text)
+root=ET.fromstring(r.text)
 
-    papers=[]
+papers=[]
 
-    for entry in root.findall("{http://www.w3.org/2005/Atom}entry"):
+for entry in root.findall("{http://www.w3.org/2005/Atom}entry"):
 
-        title=entry.find("{http://www.w3.org/2005/Atom}title").text
-        abstract=entry.find("{http://www.w3.org/2005/Atom}summary").text
-        pid=entry.find("{http://www.w3.org/2005/Atom}id").text
+    published = entry.find("{http://www.w3.org/2005/Atom}published").text
+    date = datetime.datetime.strptime(published[:10], "%Y-%m-%d").date()
 
-        papers.append({
-            "id":pid,
-            "title":title,
-            "abstract":abstract,
-            "source":"arxiv"
-        })
+    if (datetime.date.today() - date).days > 1:
+        continue
 
-    return papers
+    title=entry.find("{http://www.w3.org/2005/Atom}title").text
+    abstract=entry.find("{http://www.w3.org/2005/Atom}summary").text
+    pid=entry.find("{http://www.w3.org/2005/Atom}id").text
 
+    papers.append({
+        "id":pid,
+        "title":title,
+        "abstract":abstract,
+        "source":"arxiv"
+    })
+
+return papers
+```
 
 # ======================
+
 # 数据库存储 + 去重
+
 # ======================
 
 def save_papers(papers):
 
-    new_papers=[]
+```
+new_papers=[]
 
-    for p in papers:
+for p in papers:
 
-        try:
+    try:
 
-            cursor.execute(
-                "INSERT INTO papers VALUES (?,?,?,?,?)",
-                (
-                    p["id"],
-                    p["title"],
-                    p["abstract"],
-                    p["source"],
-                    str(datetime.date.today())
-                )
+        cursor.execute(
+            "INSERT INTO papers VALUES (?,?,?,?,?)",
+            (
+                p["id"],
+                p["title"],
+                p["abstract"],
+                p["source"],
+                str(datetime.date.today())
             )
+        )
 
-            new_papers.append(p)
+        new_papers.append(p)
 
-        except:
-            pass
+    except:
+        pass
 
-    conn.commit()
+conn.commit()
 
-    return new_papers
-
+return new_papers
+```
 
 # ======================
+
 # AI摘要
+
 # ======================
 
 def summarize_paper(title,abstract):
 
-    if not DEEPSEEK_API_KEY:
-        return "未配置 DeepSeek API Key"
+```
+if not DEEPSEEK_API_KEY:
+    return "未配置 DeepSeek API Key"
 
-    prompt=f"""
+prompt=f"""
+```
+
 请用中文总结下面论文：
 
 标题：
@@ -195,161 +219,164 @@ def summarize_paper(title,abstract):
 研究方法：
 """
 
-    url="https://api.deepseek.com/v1/chat/completions"
+```
+url="https://api.deepseek.com/v1/chat/completions"
 
-    headers={
-        "Authorization":f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type":"application/json"
-    }
+headers={
+    "Authorization":f"Bearer {DEEPSEEK_API_KEY}",
+    "Content-Type":"application/json"
+}
 
-    data={
-        "model":"deepseek-chat",
-        "messages":[{"role":"user","content":prompt}]
-    }
+data={
+    "model":"deepseek-chat",
+    "messages":[{"role":"user","content":prompt}]
+}
 
-    r=requests.post(url,headers=headers,json=data)
+r=requests.post(url,headers=headers,json=data)
 
-    result=r.json()
+result=r.json()
 
-    return result["choices"][0]["message"]["content"]
-
+return result["choices"][0]["message"]["content"]
+```
 
 # ======================
-# 研究趋势图
+
+# 趋势图
+
 # ======================
 
 def trend_analysis():
 
-    cursor.execute("SELECT abstract FROM papers")
+```
+cursor.execute("SELECT abstract FROM papers")
 
-    texts=[row[0] for row in cursor.fetchall()]
+texts=[row[0] for row in cursor.fetchall()]
 
-    if len(texts)<10:
-        return None
+if len(texts)<10:
+    return None
 
-    vectorizer=TfidfVectorizer(stop_words="english",max_features=15)
+vectorizer=TfidfVectorizer(stop_words="english",max_features=15)
 
-    X=vectorizer.fit_transform(texts)
+X=vectorizer.fit_transform(texts)
 
-    words=vectorizer.get_feature_names_out()
+words=vectorizer.get_feature_names_out()
 
-    scores=X.sum(axis=0).tolist()[0]
+scores=X.sum(axis=0).tolist()[0]
 
-    plt.figure()
+plt.figure()
 
-    plt.bar(words,scores)
+plt.bar(words,scores)
 
-    plt.xticks(rotation=60)
+plt.xticks(rotation=60)
 
-    plt.title("Research Trends")
+plt.title("Research Trends")
 
-    plt.tight_layout()
+plt.tight_layout()
 
-    file="trend.png"
+file="trend.png"
 
-    plt.savefig(file)
+plt.savefig(file)
 
-    return file
-
+return file
+```
 
 # ======================
+
 # 发送邮件
+
 # ======================
 
 def send_email(report,trend_file):
 
-    if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
-        print("未配置邮箱")
-        return
+```
+if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
+    print("未配置邮箱")
+    return
 
-    msg=MIMEMultipart()
+msg=MIMEMultipart()
 
-    msg["Subject"]="心理学研究雷达（每日）"
+msg["Subject"]="心理学研究雷达（过去24小时）"
 
-    msg["From"]=EMAIL_ADDRESS
+msg["From"]=EMAIL_ADDRESS
+msg["To"]=", ".join(RECIPIENTS)
 
-    msg["To"]=", ".join(RECIPIENTS)
+msg.attach(MIMEText(report,"plain","utf-8"))
 
-    msg.attach(MIMEText(report,"plain","utf-8"))
+if trend_file:
 
-    if trend_file:
+    with open(trend_file,"rb") as f:
 
-        with open(trend_file,"rb") as f:
+        img=MIMEImage(f.read())
 
-            img=MIMEImage(f.read())
+        img.add_header(
+            'Content-Disposition',
+            'attachment',
+            filename="trend.png"
+        )
 
-            img.add_header(
-                'Content-Disposition',
-                'attachment',
-                filename="trend.png"
-            )
+        msg.attach(img)
 
-            msg.attach(img)
+server=smtplib.SMTP(SMTP_SERVER,SMTP_PORT)
 
-    server=smtplib.SMTP(SMTP_SERVER,SMTP_PORT)
+server.starttls()
 
-    server.starttls()
+server.login(EMAIL_ADDRESS,EMAIL_PASSWORD)
 
-    server.login(EMAIL_ADDRESS,EMAIL_PASSWORD)
+server.sendmail(
+    EMAIL_ADDRESS,
+    RECIPIENTS,
+    msg.as_string()
+)
 
-    server.sendmail(
-        EMAIL_ADDRESS,
-        RECIPIENTS,
-        msg.as_string()
-    )
-
-    server.quit()
-
+server.quit()
+```
 
 # ======================
+
 # 主程序
+
 # ======================
 
 def main():
 
-    papers=[]
+```
+papers=[]
 
-    papers+=fetch_pubmed()
+papers+=fetch_pubmed()
+papers+=fetch_arxiv()
 
-    papers+=fetch_arxiv()
+# 第二层去重（内存ID去重）
+papers=list({p["id"]:p for p in papers}.values())
 
-    new_papers=save_papers(papers)
+new_papers=save_papers(papers)
 
-    if not new_papers:
+if not new_papers:
+    print("今天没有新论文")
+    return
 
-        print("今天没有新论文")
+report="心理学研究雷达（过去24小时）\n\n"
 
-        return
+for p in new_papers:
 
-    report="心理学研究雷达（过去24小时）\n\n"
+    summary=summarize_paper(p["title"],p["abstract"])
 
-    for p in new_papers:
+    report+=f"论文：{p['title']}\n\n"
+    report+=summary+"\n\n"
 
-        summary=summarize_paper(p["title"],p["abstract"])
+    if p["source"]=="pubmed":
+        link=f"https://pubmed.ncbi.nlm.nih.gov/{p['id']}"
+    else:
+        link=p["id"]
 
-        report+=f"论文：{p['title']}\n\n"
+    report+=f"原文链接：{link}\n"
+    report+="\n------------------------\n\n"
 
-        report+=summary+"\n\n"
+trend_file=trend_analysis()
 
-        if p["source"]=="pubmed":
+print(report)
 
-            link=f"https://pubmed.ncbi.nlm.nih.gov/{p['id']}"
+send_email(report,trend_file)
+```
 
-        else:
-
-            link=p["id"]
-
-        report+=f"原文链接：{link}\n"
-
-        report+="\n------------------------\n\n"
-
-    trend_file=trend_analysis()
-
-    print(report)
-
-    send_email(report,trend_file)
-
-
-if __name__=="__main__":
-
-    main()
+if **name**=="**main**":
+main()
