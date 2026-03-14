@@ -27,7 +27,7 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 SEARCH_TOPIC = os.getenv("SEARCH_TOPIC", "cognitive bias")
 
 # 去重开关（True=关闭去重，False=开启去重）
-DISABLE_DEDUP = True
+DISABLE_DEDUP = False
 
 
 # ======================
