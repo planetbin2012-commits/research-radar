@@ -26,6 +26,10 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 
 SEARCH_TOPIC = os.getenv("SEARCH_TOPIC", "cognitive bias")
 
+# 去重开关（True=关闭去重，False=开启去重）
+DISABLE_DEDUP = True
+
+
 # ======================
 # 数据库
 # ======================
@@ -44,6 +48,7 @@ date TEXT
 """)
 
 conn.commit()
+
 
 # ======================
 # PubMed抓取
@@ -316,9 +321,11 @@ def main():
     papers += fetch_pubmed()
     papers += fetch_arxiv()
 
-    papers = list({p["id"]: p for p in papers}.values())
-
-    new_papers = save_papers(papers)
+    if DISABLE_DEDUP:
+        new_papers = papers
+    else:
+        papers = list({p["id"]: p for p in papers}.values())
+        new_papers = save_papers(papers)
 
     if not new_papers:
         print("今天没有新论文")
