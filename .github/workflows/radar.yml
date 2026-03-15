@@ -2,7 +2,7 @@ name: Paper Bot
 
 on:
   schedule:
-    - cron: '0 * * * *'   # 每小时整点运行
+    - cron: '0 * * * *'   # 每小时运行一次（防止 GitHub schedule 漏触发）
   workflow_dispatch:
 
 jobs:
@@ -25,14 +25,23 @@ jobs:
         with:
           python-version: '3.10'
 
-      # 恢复数据库缓存
+      # pip 缓存（安装依赖会快很多）
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
+      # SQLite 数据库缓存
       - name: Restore paper database
         uses: actions/cache@v4
         with:
           path: papers.db
-          key: paper-db-v1
+          key: paper-db-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
-            paper-db-
+            paper-db-${{ runner.os }}-
 
       - name: Install dependencies
         run: |
@@ -42,9 +51,9 @@ jobs:
         run: |
           python paper_bot_github.py
 
-      # 再保存一次数据库
+      # 保存数据库
       - name: Save paper database
         uses: actions/cache@v4
         with:
           path: papers.db
-          key: paper-db-v1
+          key: paper-db-${{ runner.os }}-${{ github.run_id }}
