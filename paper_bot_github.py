@@ -13,28 +13,20 @@ import os
 # ======================
 # 配置
 # ======================
-
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-
 EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-
 RECIPIENTS = os.getenv("RECIPIENTS", "").split(",")
-
 SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-
 SEARCH_TOPIC = os.getenv("SEARCH_TOPIC", "cognitive bias")
-
 DISABLE_DEDUP = True
 
 # ======================
 # 数据库
 # ======================
-
 conn = sqlite3.connect("papers.db")
 cursor = conn.cursor()
-
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS papers(
 id TEXT PRIMARY KEY,
@@ -47,65 +39,59 @@ date TEXT
 conn.commit()
 
 # ======================
-# PubMed抓取
+# PubMed抓取（加容错）
 # ======================
-
 def fetch_pubmed():
-    url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-    params = {
-        "db": "pubmed",
-        "term": SEARCH_TOPIC,
-        "retmax": 20,
-        "retmode": "json",
-        "reldate": 1
-    }
-    r = requests.get(url, params=params)
-    ids = r.json()["esearchresult"]["idlist"]
-    papers = []
-    if not ids:
+    try:
+        url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+        params = {"db": "pubmed", "term": SEARCH_TOPIC, "retmax": 20, "retmode": "json", "reldate": 1}
+        r = requests.get(url, params=params, timeout=30)
+        ids = r.json()["esearchresult"]["idlist"]
+        papers = []
+        if not ids:
+            return papers
+        url2 = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+        params2 = {"db": "pubmed", "id": ",".join(ids), "retmode": "xml"}
+        r2 = requests.get(url2, params=params2, timeout=30)
+        root = ET.fromstring(r2.text)
+        for article in root.findall(".//PubmedArticle"):
+            title = article.findtext(".//ArticleTitle")
+            abstract = article.findtext(".//AbstractText")
+            pmid = article.findtext(".//PMID")
+            if abstract:
+                papers.append({"id": pmid, "title": title, "abstract": abstract, "source": "pubmed"})
         return papers
-    url2 = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
-    params2 = {"db": "pubmed", "id": ",".join(ids), "retmode": "xml"}
-    r2 = requests.get(url2, params=params2)
-    root = ET.fromstring(r2.text)
-    for article in root.findall(".//PubmedArticle"):
-        title = article.findtext(".//ArticleTitle")
-        abstract = article.findtext(".//AbstractText")
-        pmid = article.findtext(".//PMID")
-        if abstract:
-            papers.append({"id": pmid, "title": title, "abstract": abstract, "source": "pubmed"})
-    return papers
+    except Exception as e:
+        print("PubMed API error:", e)
+        return []
 
 # ======================
 # arXiv抓取（24小时过滤）
 # ======================
-
 def fetch_arxiv():
-    url = "http://export.arxiv.org/api/query"
-    params = {
-        "search_query": SEARCH_TOPIC,
-        "start": 0,
-        "max_results": 20,
-        "sortBy": "submittedDate"
-    }
-    r = requests.get(url, params=params)
-    root = ET.fromstring(r.text)
-    papers = []
-    for entry in root.findall("{http://www.w3.org/2005/Atom}entry"):
-        published = entry.find("{http://www.w3.org/2005/Atom}published").text
-        date = datetime.datetime.strptime(published[:10], "%Y-%m-%d").date()
-        if (datetime.date.today() - date).days > 1:
-            continue
-        title = entry.find("{http://www.w3.org/2005/Atom}title").text
-        abstract = entry.find("{http://www.w3.org/2005/Atom}summary").text
-        pid = entry.find("{http://www.w3.org/2005/Atom}id").text
-        papers.append({"id": pid, "title": title, "abstract": abstract, "source": "arxiv"})
-    return papers
+    try:
+        url = "http://export.arxiv.org/api/query"
+        params = {"search_query": SEARCH_TOPIC, "start": 0, "max_results": 20, "sortBy": "submittedDate"}
+        r = requests.get(url, params=params, timeout=30)
+        root = ET.fromstring(r.text)
+        papers = []
+        for entry in root.findall("{http://www.w3.org/2005/Atom}entry"):
+            published = entry.find("{http://www.w3.org/2005/Atom}published").text
+            date = datetime.datetime.strptime(published[:10], "%Y-%m-%d").date()
+            if (datetime.date.today() - date).days > 1:
+                continue
+            title = entry.find("{http://www.w3.org/2005/Atom}title").text
+            abstract = entry.find("{http://www.w3.org/2005/Atom}summary").text
+            pid = entry.find("{http://www.w3.org/2005/Atom}id").text
+            papers.append({"id": pid, "title": title, "abstract": abstract, "source": "arxiv"})
+        return papers
+    except Exception as e:
+        print("arXiv API error:", e)
+        return []
 
 # ======================
 # 数据库存储
 # ======================
-
 def save_papers(papers):
     new_papers = []
     for p in papers:
@@ -123,7 +109,6 @@ def save_papers(papers):
 # ======================
 # AI理解（评分+摘要一次完成）
 # ======================
-
 def analyze_paper(title, abstract):
     if not DEEPSEEK_API_KEY:
         return 5, "未配置API Key"
@@ -147,7 +132,7 @@ def analyze_paper(title, abstract):
     url = "https://api.deepseek.com/v1/chat/completions"
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     data = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}]}
-    r = requests.post(url, headers=headers, json=data)
+    r = requests.post(url, headers=headers, json=data, timeout=60)
     result = r.json()
     text = result["choices"][0]["message"]["content"]
     try:
@@ -159,7 +144,6 @@ def analyze_paper(title, abstract):
 # ======================
 # AI趋势综述
 # ======================
-
 def summarize_trends(papers):
     if not papers or not DEEPSEEK_API_KEY:
         return ""
@@ -180,14 +164,13 @@ def summarize_trends(papers):
     url = "https://api.deepseek.com/v1/chat/completions"
     headers = {"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"}
     data = {"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}]}
-    r = requests.post(url, headers=headers, json=data)
+    r = requests.post(url, headers=headers, json=data, timeout=60)
     result = r.json()
     return result["choices"][0]["message"]["content"]
 
 # ======================
 # 趋势图
 # ======================
-
 def trend_analysis():
     cursor.execute("SELECT abstract FROM papers")
     texts = [row[0] for row in cursor.fetchall()]
@@ -209,7 +192,6 @@ def trend_analysis():
 # ======================
 # 邮件
 # ======================
-
 def send_email(report, trend_file, paper_count):
     if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
         print("未配置邮箱")
@@ -233,11 +215,16 @@ def send_email(report, trend_file, paper_count):
 # ======================
 # 主程序
 # ======================
-
 def main():
     papers = []
-    papers += fetch_pubmed()
-    papers += fetch_arxiv()
+    try:
+        papers += fetch_pubmed()
+    except:
+        print("PubMed fetch failed, continue...")
+    try:
+        papers += fetch_arxiv()
+    except:
+        print("arXiv fetch failed, continue...")
 
     if DISABLE_DEDUP:
         new_papers = papers
@@ -257,7 +244,6 @@ def main():
             p["summary"] = summary
 
         new_papers = sorted(new_papers, key=lambda x: x["score"], reverse=True)
-
         trend_summary = summarize_trends(new_papers)
         report += "今日研究趋势综述\n"
         report += trend_summary + "\n\n"
