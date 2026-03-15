@@ -2,7 +2,7 @@ name: Paper Bot
 
 on:
   schedule:
-    - cron: '0 1 * * *'   # 每天 UTC 1点运行（北京时间9点）
+    - cron: '0 * * * *'   # 每小时整点运行
   workflow_dispatch:
 
 jobs:
