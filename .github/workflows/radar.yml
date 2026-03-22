@@ -2,7 +2,7 @@ name: Paper Bot
 
 on:
   schedule:
-    - cron: '0 */12 * * *'   # 每12小时整点触发，UTC时间
+    - cron: '0 */23 * * *'   # 每23小时整点触发，UTC时间
   workflow_dispatch:
 
 jobs:
