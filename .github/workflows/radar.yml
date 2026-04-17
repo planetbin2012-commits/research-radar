@@ -2,21 +2,23 @@ name: Paper Bot
 
 on:
   schedule:
-    - cron: '0 */23 * * *'   # 每23小时整点触发，UTC时间
+    - cron: '0 8 * * *'
   workflow_dispatch:
 
-jobs:
+permissions:
+  contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # 提到顶层，全局生效
+
+jobs:
   run-paperbot:
     runs-on: ubuntu-latest
-
     env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
       EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
       RECIPIENTS: ${{ secrets.RECIPIENTS }}
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,7 +28,6 @@ jobs:
         with:
           python-version: '3.10'
 
-      # pip 缓存（安装依赖会快很多）
       - name: Cache pip
         uses: actions/cache@v4
         with:
@@ -35,7 +36,6 @@ jobs:
           restore-keys: |
             pip-${{ runner.os }}-
 
-      # SQLite 数据库缓存
       - name: Restore paper database
         uses: actions/cache@v4
         with:
@@ -45,23 +45,14 @@ jobs:
             paper-db-${{ runner.os }}-
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Run paper bot
-        run: |
-          python paper_bot_github.py
-
-      # 保存数据库
-      - name: Save paper database
-        uses: actions/cache@v4
-        with:
-          path: papers.db
-          key: paper-db-${{ runner.os }}-${{ github.run_id }}
+        run: python paper_bot_github.py
 
   keep-alive:
     runs-on: ubuntu-latest
-
+    needs: run-paperbot
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -73,15 +64,10 @@ jobs:
 
       - name: Create empty commit if 15 days passed
         run: |
-          # 获取上一次提交时间戳
           LAST_COMMIT=$(git log -1 --format=%ct)
-
           NOW=$(date +%s)
-
-          DIFF=$(( (NOW - LAST_COMMIT) / 86400 ))  # 秒转天数
-
+          DIFF=$(( (NOW - LAST_COMMIT) / 86400 ))
           echo "Days since last commit: $DIFF"
-
           if [ $DIFF -ge 15 ]; then
             git commit --allow-empty -m "keep schedule alive $(date -u)"
             git push
